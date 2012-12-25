@@ -1,0 +1,68 @@
+source /usr/local/Kobo/scripts/common.sh
+
+if [ -f ${CONFIG_FILE} ]; then
+	source $CONFIG_FILE
+
+	MARK_FILE="/tmp/sqltuned.tmp"
+	PRODUCT=`/bin/kobo_config.sh`;
+	[ $PRODUCT != trilogy ] && PREFIX=$PRODUCT-
+
+	if [ ! -f ${MARK_FILE} ]; then
+		$DBEXE $DBFILE 'CREATE INDEX idx_ctm_content_VolumeIndex ON content (VolumeIndex)'
+		$DBEXE $DBFILE 'CREATE INDEX idx_ctm_volshcov_VolumeIndex ON volume_shortcovers (VolumeIndex)'
+		echo "Database Tuned Done" > $MARK_FILE
+	fi
+
+	if [ "$DBCacheSize" == "MAX" ]; then
+		$DBEXE $DBFILE "PRAGMA default_cache_size=65534;"
+	elif [ "$DBCacheSize" == "DEFAULT" ]; then
+		$DBEXE $DBFILE "PRAGMA default_cache_size=2000;"
+	elif [ "$DBCacheSize" != "" ]; then
+		expect_empty=`echo -n $DBCacheSize | sed 's/[0-9]//g' `
+
+		if [ -n "$expect_empty" ]; then
+			$DBEXE $DBFILE "PRAGMA default_cache_size=2000;"
+		else
+			if [ "$DBCacheSize" -gt 65534 ]; then
+				$DBEXE $DBFILE "PRAGMA default_cache_size=65534;"
+			elif [ "$DBCacheSize" -lt 2000 ]; then
+				$DBEXE $DBFILE "PRAGMA default_cache_size=2000;"
+			else
+				$DBEXE $DBFILE "PRAGMA default_cache_size=${DBCacheSize};"
+			fi
+		fi
+	else
+		$DBEXE $DBFILE "PRAGMA default_cache_size=2000;"
+	fi
+
+	if [ "$UseDataPatch" == "BOOT" -o "$UseDataPatch" == "BOTH" ]; then
+		killall on-animator.sh
+		zcat /etc/images/$PREFIX\ghostbuster.raw.gz | /usr/local/Kobo/pickel showpic
+
+		/etc/init.d/dbupdate-animator.sh &
+
+		/usr/local/Kobo/scripts/AddFunctionscript.sh
+
+		killall dbupdate-animator.sh
+		zcat /etc/images/$PREFIX\ghostbuster.raw.gz | /usr/local/Kobo/pickel showpic
+
+		if [ "$DataBaseOptimization" == "OFF" ]; then
+			/etc/init.d/on-animator.sh &
+		fi
+	fi
+
+	if [ "$DataBaseOptimization" == "ON" ]; then
+		killall on-animator.sh
+
+		zcat /etc/images/$PREFIX\ghostbuster.raw.gz | /usr/local/Kobo/pickel showpic
+		/etc/init.d/rebuild-animator.sh &
+
+		/usr/local/Kobo/scripts/dbOptimize.sh
+
+		killall rebuild-animator.sh
+
+		zcat /etc/images/$PREFIX\ghostbuster.raw.gz | /usr/local/Kobo/pickel showpic
+		/etc/init.d/on-animator.sh &
+	fi
+	/mnt/onboard/ext/boot.sh
+fi

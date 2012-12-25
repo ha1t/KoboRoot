@@ -1,0 +1,58 @@
+#!/bin/sh
+
+if [ "$STARTUP" == "1" ]; then
+	exit;
+fi
+
+PLATFORM=freescale
+if [ `dd if=/dev/mmcblk0 bs=512 skip=1024 count=1 | grep -c "HW CONFIG"` == 1 ]; then
+	if [ -e /drivers/ntx508 ]; then
+		PLATFORM=ntx508
+
+	else
+		if [ `dd if=/dev/mmcblk0 bs=512 skip=1024 count=1 | grep -c "v0.7"` == 1 ]; then
+			PLATFORM=m166e
+
+		elif [ -e /drivers/netronix ]; then
+			PLATFORM=netronix
+
+		fi
+	fi
+fi
+
+MODULE_LOADED=`lsmod | grep -c g_file_storage`
+if [ $MODULE_LOADED -gt 0 ]; then
+	if [ "$ACTION" == "remove" ]; then
+		echo sd $ACTION $DEVNAME >> /tmp/nickel-hardware-status
+		ACTION=remove /usr/local/Kobo/udev/plug
+		sleep 5
+		exit
+	fi
+fi
+
+DEV="/dev/mmcblk1p1"
+
+if [ "$DEV" == "$DEVNAME" ]; then
+	if [ "$ACTION" == "add" ]; then
+		dosfsck -a -w $DEVNAME
+		mount -r -t vfat -o iocharset=utf8,shortname=mixed $DEVNAME /mnt/sd
+		if [ $? != 0 ]; then
+#			mount -r $DEVNAME /mnt/sd
+#			if [ $? != 0 ]; then
+				echo sd mount fail $DEVNAME >> /tmp/nickel-hardware-status &
+#			else
+#				echo sd $ACTION $DEVNAME >> /tmp/nickel-hardware-status &
+#			fi
+		else
+			/usr/local/Kobo/scripts/ReplaceFileSD.sh
+			/mnt/onboard/ext/mount_sd.sh
+			echo sd $ACTION $DEVNAME >> /tmp/nickel-hardware-status &
+		fi
+	fi
+fi
+
+if [ "$ACTION" == "remove" ]; then
+	echo sd $ACTION $DEVNAME >> /tmp/nickel-hardware-status &
+	umount -l /mnt/sd
+	sync
+fi

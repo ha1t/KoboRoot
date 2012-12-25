@@ -1,0 +1,161 @@
+#!/bin/sh
+
+PRODUCT=`/bin/kobo_config.sh`;
+[ $PRODUCT != trilogy ] && PREFIX=$PRODUCT-
+
+MODULE_LOADED=`lsmod | grep -c g_file_storage`
+USE_MODUTILS=1
+
+PLATFORM=freescale
+VENDOR_ID=0x2237
+INTERFACE=wlan0
+WIFI_MODULE=ar6000
+
+if [ `dd if=/dev/mmcblk0 bs=512 skip=1024 count=1 | grep -c "HW CONFIG"` == 1 ]; then
+	if [ -e /drivers/ntx508 ]; then
+		PLATFORM=ntx508
+		INTERFACE=eth0
+		WIFI_MODULE=dhd
+	fi
+fi
+
+DEV="/dev/mmcblk1p1"
+if [ -e /dev/mmcblk1p1 ]; then
+	LUNS=/dev/mmcblk0p3,/dev/mmcblk1p1
+else
+	LUNS=/dev/mmcblk0p3
+fi
+
+PARAMS="vendor=$VENDOR_ID product=$PRODUCT_ID vendor_id=Kobo product_id=eReader-$VERSION SN=$SN"
+
+if [ "$ACTION" == "add" ]; then
+	/usr/local/Kobo/scripts/ChangeJournalMode.sh OFF
+	/usr/local/Kobo/scripts/ReplaceFile.sh
+	/mnt/onboard/ext/mount_usb.sh
+	wait
+
+	sync
+	umount -l /mnt/onboard
+	umount -l /mnt/sd
+
+	/sbin/insmod /drivers/$PLATFORM/usb/gadget/arcotg_udc.ko
+	sleep 2
+
+	if [ $USE_MODUTILS == 0 ]; then
+		j=0;
+		for i in $LUNS; do
+			echo $i > /sys/devices/platform/fsl-usb2-udc/gadget/gadget-lun$j/file
+			j=$(($j+1))
+		done
+	else
+		/sbin/insmod /drivers/$PLATFORM/usb/gadget/g_file_storage.ko file=$LUNS stall=1 removable=1 $PARAMS
+	fi
+	sleep 1
+
+elif [ "$ACTION" == "remove" ]; then
+	if [ $MODULE_LOADED -eq 0 ]; then
+		exit
+	fi
+
+	/sbin/rmmod g_file_storage
+	/sbin/rmmod arcotg_udc
+	sleep 1
+
+	if [ -e /drivers/$PLATFORM ]; then
+		PARTITION=/dev/mmcblk0p3
+		MOUNTARGS="noatime,nodiratime,iocharset=utf8"
+	fi
+
+	dosfsck -a -w $PARTITION
+	mount -o $MOUNTARGS -t vfat $PARTITION /mnt/onboard
+
+	if [ -e $DEV ]; then
+		mount -r -t vfat -o iocharset=utf8,shortname=mixed $DEV /mnt/sd
+#		if [ $? != 0 ]; then
+#			mount -r $DEV /mnt/sd
+#		fi
+	fi
+
+	/usr/local/Kobo/scripts/ChangeJournalMode.sh ON
+
+	rm -rf /etc/images/boot/boot.mng
+	cp /mnt/onboard/.images/boot.mng /etc/images/boot
+
+	sleep 1
+
+	rm -rf /mnt/onboard/fsck*
+	rm -rf /mnt/onboard/FSCK*
+
+	if [ -e /mnt/onboard/.kobo/KoboRoot.tgz ]; then
+		killall nickel
+		killall adobehost
+		zcat /etc/images/$PREFIX\ghostbuster.raw.gz | /usr/local/Kobo/pickel showpic
+		/etc/init.d/update-animator.sh &
+		echo 3 > /proc/sys/vm/drop_caches; sleep 2;
+		zcat /mnt/onboard/.kobo/KoboRoot.tgz > /dev/null && tar zxf /mnt/onboard/.kobo/KoboRoot.tgz -C /
+		rm /mnt/onboard/.kobo/KoboRoot.tgz
+		echo 3 > /proc/sys/vm/drop_caches; sleep 2;
+		if [ -e /mnt/onboard/.kobo/upgrade ]; then
+			/etc/init.d/upgrade-wifi.sh
+			rm -rf /mnt/onboard/.kobo/upgrade
+		fi
+		killall update-animator.sh
+		zcat /etc/images/$PREFIX\ghostbuster.raw.gz | /usr/local/Kobo/pickel showpic
+
+		if [ -f /mnt/onboard/.images/rebooting.png ]; then
+			/usr/local/Kobo/png2raw-12 -K -ta /mnt/onboard/.images/rebooting.png
+		else
+			zcat /etc/images/$PREFIX\reboot.raw.gz | /usr/local/Kobo/pickel showpic
+		fi
+
+		sync
+		sleep 1;
+		reboot
+	fi
+
+	if [ -e /mnt/onboard/.kobo/Kobo.tgz ]; then
+		killall nickel
+		killall adobehost
+		zcat /etc/images/$PREFIX\ghostbuster.raw.gz | /usr/local/Kobo/pickel showpic
+		/etc/init.d/update-animator.sh &
+		echo 3 > /proc/sys/vm/drop_caches; sleep 2;
+		zcat /mnt/onboard/.kobo/Kobo.tgz > /dev/null && tar zxf /mnt/onboard/.kobo/Kobo.tgz -C /usr/local/Kobo/
+		rm /mnt/onboard/.kobo/Kobo.tgz
+		echo 3 > /proc/sys/vm/drop_caches; sleep 2;
+		sync
+		echo "Done upgrading..."
+
+		export PLATFORM
+		export NICKEL_HOME=/mnt/onboard/.kobo
+		export LD_LIBRARY_PATH=/usr/local/Kobo
+		export LANG=en_US.UTF-8
+
+		export QWS_MOUSE_PROTO=tslib_nocal:/dev/input/event1
+		export QWS_KEYBOARD=imx508kbd:/dev/input/event0
+		export QWS_DISPLAY=Transformed:imx508:Rot90
+		export INTERFACE
+		export WIFI_MODULE
+		export WIFI_MODULE_PATH=/drivers/$PLATFORM/wifi/$WIFI_MODULE.ko
+
+		/usr/local/Kobo/nickel -qws &
+
+		killall update-animator.sh
+		rmmod $WIFI_MODULE;
+	fi
+
+	source /usr/local/Kobo/scripts/common.sh
+
+	if [ -f ${CONFIG_FILE} ]; then
+		source $CONFIG_FILE
+
+		if [ "$UseDataPatch" == "USB" -o "$UseDataPatch" == "BOTH" ]; then
+			/etc/init.d/dbupdate-animator.sh &
+
+			/usr/local/Kobo/scripts/AddFunctionscript.sh
+
+			killall dbupdate-animator.sh
+			sync
+		fi
+		/mnt/onboard/ext/umount_usb.sh
+	fi
+fi

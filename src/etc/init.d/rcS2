@@ -1,0 +1,33 @@
+#!/bin/sh
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts
+
+#Update mount option Command
+
+TARGET1=/usr/local/Kobo/udev/usb
+TARGET2=/usr/local/Kobo/udev/sd
+TARGETSTR=" -o shortname=mixed "
+
+EXP="s/$TARGETSTR/ -o iocharset=utf8,shortname=mixed /g"
+
+if [ `cat $TARGET1 | grep "$TARGETSTR" | wc -l` -ne 0 ]; then
+	sed -i -e "$EXP" $TARGET1
+	sed -i -e "$EXP" $TARGET2
+fi
+
+CONFIG_FILE="/mnt/onboard/.kobo/koboCFW.conf"
+
+if [ ! -f ${CONFIG_FILE} ]; then
+	exit 0 
+fi
+
+source $CONFIG_FILE
+
+if [ "$EnabledSwap" == "ON" ]; then
+	SWAP=`fdisk -l | grep "Linux swap" | cut -d ' ' -f 1`
+	export SWAP
+	if [ "$SWAP" != "" ]; then
+		mkswap $SWAP
+		swapon $SWAP
+	fi
+fi

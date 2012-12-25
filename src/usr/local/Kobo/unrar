@@ -1,0 +1,24 @@
+#!/bin/sh
+
+
+UNRAR=`dirname $0`/unrar.orig
+
+if [ $UNRAR_WRAPPER_DEBUG ]; then
+  echo "$@" >>/mnt/onboard/unrar.log
+fi
+
+if [ "$#" -eq 5 -a "$1" = "p" ]; then
+  #unrar p -ierr -- archive-file target-file
+  $UNRAR $1 $2 $3 "$4" "`echo $5 | iconv -f UTF-8 -t latin1`"
+else
+  $UNRAR "$@"
+fi
+exit $?
+
+#preparement:
+#  mv /usr/local/Kobo/unrar /usr/local/Kobo/unrar.orig
+#  cp ./unrar.sh /usr/local/Kobo/unrar
+#  chmod +x /usr/local/Kobo/unrar
+#
+#TODO:
+# exist status : incompatible? (user break)
